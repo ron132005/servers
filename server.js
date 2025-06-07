@@ -15,12 +15,19 @@ const DOWNLOAD_DIR = path.join(__dirname, "downloads");
 fs.ensureDirSync(DOWNLOAD_DIR);
 
 app.get("/download", async (req, res) => {
-  const { url, title, year } = req.query;
+  const { url, title, year, quality } = req.query;
+
+  // Validate required params
   if (!url || !title || !year) {
     return res
       .status(400)
       .send("Missing parameters: url, title, and year are required.");
   }
+
+  // Clean up inputs / provide fallback for quality
+  const cleanTitle = title.trim();
+  const cleanYear = year.trim();
+  const cleanQuality = quality ? quality.trim() : "unknown-quality";
 
   // Create HTTPS agent that ignores invalid certs (dev only!)
   const agent = new https.Agent({ rejectUnauthorized: false });
@@ -30,20 +37,19 @@ app.get("/download", async (req, res) => {
     const head = await axios.head(url, { httpsAgent: agent });
     const contentType = (head.headers["content-type"] || "").toLowerCase();
 
-    // Determine extension
+    // Determine file extension
     let ext = path.extname(new URL(url).pathname);
     if (!ext) {
-      if (contentType.includes("torrent")) {
-        ext = ".torrent";
-      } else {
-        ext = ".torrent";
-      }
+      // fallback to .torrent
+      ext = ".torrent";
     }
 
-    const filename = `${title} (${year}) [getRONed]${ext}`;
+    // Build filename with quality tag
+    // e.g. "Inception (2010) [1080p] [getRONed].torrent"
+    const filename = `${cleanTitle} (${cleanYear}) [${cleanQuality}] [getRONed]${ext}`;
     const filepath = path.join(DOWNLOAD_DIR, filename);
 
-    // Now stream the file
+    // Stream the file down to disk
     const response = await axios({
       method: "GET",
       url,
@@ -51,18 +57,17 @@ app.get("/download", async (req, res) => {
       httpsAgent: agent,
     });
 
-    // Pipe to disk
     const writer = fs.createWriteStream(filepath);
     response.data.pipe(writer);
 
     writer.on("finish", () => {
+      // Send the file to the client, then delete it
       res.download(filepath, filename, async (err) => {
         if (err) console.error("Error sending file:", err);
         try {
           await fs.remove(filepath);
-          console.log(`removed`);
-        } catch (e) {
-          console.error("Cleanup failed:", e);
+        } catch (cleanupErr) {
+          console.error("Cleanup failed:", cleanupErr);
         }
       });
     });
